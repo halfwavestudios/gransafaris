@@ -122,6 +122,19 @@ function pickLang(lang){ currentLang = lang; try{ localStorage.setItem(LANG_KEY,
 if(chooseEn) chooseEn.addEventListener('click', ()=> pickLang('en'));
 if(chooseIt) chooseIt.addEventListener('click', ()=> pickLang('it'));
 
+// Prevent taps/clicks on language buttons from bubbling to the global pointer handlers
+// (on mobile the global pointerdown/touchstart starts the game). Stop propagation
+// on the overlay language buttons and the small language pills.
+(function guardLangButtons(){
+  const btns = [chooseEn, chooseIt];
+  btns.forEach(b => {
+    if(!b) return;
+    ['pointerdown','touchstart','click'].forEach(ev => {
+      try{ b.addEventListener(ev, function(e){ e.stopPropagation(); if(e.preventDefault) e.preventDefault(); }, {passive:false}); }catch(err){ /* ignore */ }
+    });
+  });
+})();
+
 // Game state
 let game = {running:false, speed:0, score:0, frame:0, ground:0, groundOffset:0, spawnCooldown:0};
 let player = {x:80, y:0, vy:0, jumping:false, crouching:false, frame:0, tick:0};
@@ -215,6 +228,30 @@ window.addEventListener('keyup', e => {
 function onPointerDown(e){
   // prevent default to avoid page scrolling on touch
   if(e && e.preventDefault) e.preventDefault();
+  try{
+    // If the language overlay is visible, ignore pointer events so tapping
+    // the language buttons doesn't start the game on mobile.
+    const langOverlay = document.getElementById('languageOverlay');
+    const langSwitch = document.getElementById('langSwitch');
+    const langChooseEn = document.getElementById('chooseEn');
+    const langChooseIt = document.getElementById('chooseIt');
+    const langPillEn = document.getElementById('langEn');
+    const langPillIt = document.getElementById('langIt');
+    const overlayBoxEl = document.getElementById('overlayBox');
+    // if overlay is shown, do nothing (let the overlay buttons handle the event)
+    if(langOverlay && langOverlay.style && langOverlay.style.display !== 'none'){
+      if(e.stopPropagation) e.stopPropagation();
+      return;
+    }
+    // if the event target is inside any language UI element (pills or overlay buttons), ignore it
+    const tgt = e.target || e.srcElement;
+    function inside(el){ return el && tgt && (el === tgt || el.contains && el.contains(tgt)); }
+    if( inside(langSwitch) || inside(langChooseEn) || inside(langChooseIt) || inside(langPillEn) || inside(langPillIt) || inside(overlayBoxEl) ){
+      if(e.stopPropagation) e.stopPropagation();
+      return;
+    }
+  }catch(err){ /* ignore guard errors */ }
+
   if (!spacePressed) {
     spacePressed = true;
     if (!game.running) start();
@@ -813,6 +850,17 @@ if(btnEn) btnEn.addEventListener('click', ()=>{ currentLang='en'; updateLangUI()
   setFunFactForIndex(SINGLE_PARK_INDEX); startFunFacts(); });
 if(btnIt) btnIt.addEventListener('click', ()=>{ currentLang='it'; updateLangUI(); setFunFactForIndex(SINGLE_PARK_INDEX); startFunFacts(); });
 updateLangUI();
+
+// Also guard the small language pills (top-left) so taps on mobile don't start the game
+(function guardLangPills(){
+  const pills = [btnEn, btnIt];
+  pills.forEach(b => {
+    if(!b) return;
+    ['pointerdown','touchstart','click'].forEach(ev => {
+      try{ b.addEventListener(ev, function(e){ e.stopPropagation(); if(e.preventDefault) e.preventDefault(); }, {passive:false}); }catch(err){ }
+    });
+  });
+})();
 </script>
 </body>
 </html>
