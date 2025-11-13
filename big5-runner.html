@@ -19,10 +19,10 @@
 <canvas id="c"></canvas>
 <!-- Site logo (separate from background). Provide a `logo.png` in the same folder. -->
 <img id="siteLogo" src="logo.png" alt="logo" style="position:fixed;top:8px;left:8px;height:64px;z-index:2000;pointer-events:none;transition:height 180ms ease,transform 180ms ease;display:block"> 
-<!-- Language switch (small pills next to the logo) -->
-<div id="langSwitch" style="position:fixed;top:12px;left:86px;z-index:2001;display:flex;gap:6px">
-  <button id="langEn" style="background:#fff;border:1px solid rgba(0,0,0,0.08);border-radius:999px;padding:6px 8px;font-weight:700;cursor:pointer">EN</button>
-  <button id="langIt" style="background:transparent;border:1px solid rgba(0,0,0,0.08);border-radius:999px;padding:6px 8px;font-weight:700;cursor:pointer">IT</button>
+<!-- Language switch (circular flag pills fixed to the right-middle of the screen) -->
+<div id="langSwitch" style="position:fixed;right:12px;top:50%;transform:translateY(-50%);z-index:2001;display:flex;flex-direction:column;gap:10px;pointer-events:auto">
+  <button id="langEn" aria-label="English" style="width:44px;height:44px;border-radius:50%;border:1px solid rgba(0,0,0,0.12);background:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;cursor:pointer;font-size:20px">🇺🇸</button>
+  <button id="langIt" aria-label="Italiano" style="width:44px;height:44px;border-radius:50%;border:1px solid rgba(0,0,0,0.12);background:transparent;display:flex;align-items:center;justify-content:center;font-weight:700;cursor:pointer;font-size:20px">🇮🇹</button>
 </div>
 
 <!-- Fullscreen language picker shown before the user chooses a language -->
@@ -31,8 +31,8 @@
     <h1 id="langOverlayTitle" style="margin:0 0 12px;font-size:22px">Choose your language</h1>
     <p id="langOverlaySubtitle" style="margin:0 0 20px;color:#5f6368">Select the language you prefer to play in.</p>
     <div style="display:flex;gap:14px;justify-content:center;flex-wrap:wrap">
-      <button id="chooseEn" style="min-width:140px;padding:12px 16px;border-radius:8px;border:none;background:#1a73e8;color:#fff;font-weight:700;font-size:16px;cursor:pointer">English</button>
-      <button id="chooseIt" style="min-width:140px;padding:12px 16px;border-radius:8px;border:1px solid rgba(0,0,0,0.08);background:transparent;color:#202124;font-weight:700;font-size:16px;cursor:pointer">Italiano</button>
+      <button id="chooseEn" style="min-width:140px;padding:12px 16px;border-radius:8px;border:none;background:#1a73e8;color:#fff;font-weight:700;font-size:16px;cursor:pointer"> <span style="font-size:18px;margin-right:8px">🇺🇸</span> English</button>
+      <button id="chooseIt" style="min-width:140px;padding:12px 16px;border-radius:8px;border:1px solid rgba(0,0,0,0.08);background:transparent;color:#202124;font-weight:700;font-size:16px;cursor:pointer"> <span style="font-size:18px;margin-right:8px">🇮🇹</span> Italiano</button>
     </div>
     <div style="margin-top:18px;color:#5f6368;font-size:13px">You can change language later using the small language pills.</div>
   </div>
@@ -110,30 +110,31 @@ function showLanguageOverlayIfNeeded(){
   const overlay = document.getElementById('languageOverlay');
   if(!overlay) return;
   // if user already chose language previously, don't show
-  try{ const saved = localStorage.getItem(LANG_KEY); if(saved) { overlay.style.display='none'; return; } }catch(e){}
+  try{ const saved = localStorage.getItem('big5_lang_v1'); if(saved) { overlay.style.display='none'; return; } }catch(e){}
   overlay.style.display = 'flex';
+  // while the overlay is visible, disable pointer events on the canvas
+  try{ if(canvas) canvas.style.pointerEvents = 'none'; }catch(e){}
+  // hide the site logo while the overlay is visible so it doesn't show through
+  try{ const logo = document.getElementById('siteLogo'); if(logo) logo.style.display = 'none'; }catch(e){}
 }
 showLanguageOverlayIfNeeded();
 
 // wire overlay buttons
 const chooseEn = document.getElementById('chooseEn');
 const chooseIt = document.getElementById('chooseIt');
-function pickLang(lang){ currentLang = lang; try{ localStorage.setItem(LANG_KEY, lang); }catch(e){} updateLangUI(); const overlay = document.getElementById('languageOverlay'); if(overlay) overlay.style.display='none'; }
+function pickLang(lang){
+  currentLang = lang;
+  try{ localStorage.setItem(LANG_KEY, lang); }catch(e){}
+  updateLangUI();
+  const overlay = document.getElementById('languageOverlay');
+  if(overlay) overlay.style.display='none';
+  try{ if(canvas) canvas.style.pointerEvents = 'auto'; }catch(e){}
+  // restore logo visibility after a language is chosen
+  try{ const logo = document.getElementById('siteLogo'); if(logo) logo.style.display = 'block'; }catch(e){}
+  try{ layoutFunFacts(); }catch(e){}
+}
 if(chooseEn) chooseEn.addEventListener('click', ()=> pickLang('en'));
 if(chooseIt) chooseIt.addEventListener('click', ()=> pickLang('it'));
-
-// Prevent taps/clicks on language buttons from bubbling to the global pointer handlers
-// (on mobile the global pointerdown/touchstart starts the game). Stop propagation
-// on the overlay language buttons and the small language pills.
-(function guardLangButtons(){
-  const btns = [chooseEn, chooseIt];
-  btns.forEach(b => {
-    if(!b) return;
-    ['pointerdown','touchstart','click'].forEach(ev => {
-      try{ b.addEventListener(ev, function(e){ e.stopPropagation(); if(e.preventDefault) e.preventDefault(); }, {passive:false}); }catch(err){ /* ignore */ }
-    });
-  });
-})();
 
 // Game state
 let game = {running:false, speed:0, score:0, frame:0, ground:0, groundOffset:0, spawnCooldown:0};
@@ -226,11 +227,8 @@ window.addEventListener('keyup', e => {
 
 // Touch / pointer support for mobile: tap to jump / start
 function onPointerDown(e){
-  // prevent default to avoid page scrolling on touch
-  if(e && e.preventDefault) e.preventDefault();
   try{
-    // If the language overlay is visible, ignore pointer events so tapping
-    // the language buttons doesn't start the game on mobile.
+    // If the language overlay is visible, let the overlay buttons handle the event
     const langOverlay = document.getElementById('languageOverlay');
     const langSwitch = document.getElementById('langSwitch');
     const langChooseEn = document.getElementById('chooseEn');
@@ -238,28 +236,25 @@ function onPointerDown(e){
     const langPillEn = document.getElementById('langEn');
     const langPillIt = document.getElementById('langIt');
     const overlayBoxEl = document.getElementById('overlayBox');
-    // if overlay is shown, do nothing (let the overlay buttons handle the event)
-    if(langOverlay && langOverlay.style && langOverlay.style.display !== 'none'){
-      if(e.stopPropagation) e.stopPropagation();
-      return;
-    }
-    // if the event target is inside any language UI element (pills or overlay buttons), ignore it
     const tgt = e.target || e.srcElement;
-    function inside(el){ return el && tgt && (el === tgt || el.contains && el.contains(tgt)); }
-    if( inside(langSwitch) || inside(langChooseEn) || inside(langChooseIt) || inside(langPillEn) || inside(langPillIt) || inside(overlayBoxEl) ){
-      if(e.stopPropagation) e.stopPropagation();
-      return;
+    function inside(el){ return el && tgt && (el === tgt || (el.contains && el.contains(tgt))); }
+    // If overlay is visible or touch is inside language UI or any overlay, do nothing here
+    if((langOverlay && langOverlay.style && langOverlay.style.display !== 'none') || inside(langSwitch) || inside(langChooseEn) || inside(langChooseIt) || inside(langPillEn) || inside(langPillIt) || inside(overlayBoxEl)){
+      return; // allow the click/tap to proceed normally (no preventDefault)
     }
   }catch(err){ /* ignore guard errors */ }
 
+  // Only prevent default when we are about to start/jump the game — this preserves
+  // normal button/tap behavior for interactive UI like language selection.
   if (!spacePressed) {
+    if(e && e.preventDefault) e.preventDefault();
     spacePressed = true;
     if (!game.running) start();
     else if (!player.jumping) jump();
   }
 }
 function onPointerUp(e){
-  if(e && e.preventDefault) e.preventDefault();
+  // don't prevent default here; just release the spacePressed flag
   spacePressed = false;
 }
 window.addEventListener('touchstart', onPointerDown, {passive:false});
@@ -482,12 +477,15 @@ function layoutFunFacts(){
     container.style.top = (lr.bottom + 8) + 'px';
     container.style.right = '';
     const card = document.getElementById('funFactCard'); if(card) card.style.maxWidth = 'calc(100% - 16px)';
+    // on mobile keep the fixed right-middle pills but ensure they don't overlap critical UI
+    // no-op: pills are fixed to right-middle via CSS; layout adjustments not needed here
   } else {
     // desktop: to the right of logo
     container.style.top = (lr.top) + 'px';
     container.style.left = (lr.right + 12) + 'px';
     container.style.right = '';
     const card = document.getElementById('funFactCard'); if(card) card.style.maxWidth = '380px';
+    // pills remain fixed at right-middle; no dynamic repositioning required
   }
 }
 
@@ -847,20 +845,13 @@ function updateLangUI(){
   const titleEl = document.getElementById('funFactTitleText'); if(titleEl) titleEl.textContent = t('didYouKnow');
 }
 if(btnEn) btnEn.addEventListener('click', ()=>{ currentLang='en'; updateLangUI(); // reload facts in new language
-  setFunFactForIndex(SINGLE_PARK_INDEX); startFunFacts(); });
-if(btnIt) btnIt.addEventListener('click', ()=>{ currentLang='it'; updateLangUI(); setFunFactForIndex(SINGLE_PARK_INDEX); startFunFacts(); });
+  pickLang('en'); setFunFactForIndex(SINGLE_PARK_INDEX); startFunFacts(); });
+if(btnIt) btnIt.addEventListener('click', ()=>{ pickLang('it'); setFunFactForIndex(SINGLE_PARK_INDEX); startFunFacts(); });
 updateLangUI();
 
 // Also guard the small language pills (top-left) so taps on mobile don't start the game
-(function guardLangPills(){
-  const pills = [btnEn, btnIt];
-  pills.forEach(b => {
-    if(!b) return;
-    ['pointerdown','touchstart','click'].forEach(ev => {
-      try{ b.addEventListener(ev, function(e){ e.stopPropagation(); if(e.preventDefault) e.preventDefault(); }, {passive:false}); }catch(err){ }
-    });
-  });
-})();
+// no-op: language pills are handled by simple click handlers; global pointer
+// handler already ignores events when the language overlay or pills are active.
 </script>
 </body>
 </html>
