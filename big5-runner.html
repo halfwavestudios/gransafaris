@@ -12,11 +12,23 @@
 <body>
 <canvas id="c"></canvas>
 <div id="debug" style="position:fixed;left:8px;top:8px;padding:8px;background:rgba(255,255,255,0.9);color:#000;border:1px solid #ddd;font-family:monospace;z-index:9999;max-width:40%;font-size:13px;line-height:1.2"></div>
+<!-- Highscore box (top-right) -->
+<div id="highscoreBox" style="position:fixed;right:8px;top:8px;padding:8px 12px;background:rgba(255,255,255,0.95);color:#000;border:1px solid #ddd;font-family:monospace;z-index:9999;font-size:13px;border-radius:6px;min-width:160px;text-align:left">
+  <div style="font-weight:700;margin-bottom:4px">High Score</div>
+  <div><span id="hsName">—</span> <span id="hsScore">0</span></div>
+</div>
+<!-- Fun fact box (bottom-right) -->
+<div id="funFact" style="position:fixed;right:8px;bottom:8px;padding:10px 12px;background:rgba(255,255,255,0.9);color:#000;border:1px solid #ddd;font-family:Arial,monospace;z-index:9999;font-size:13px;border-radius:6px;max-width:320px;opacity:0.95">Fun fact will appear here.</div>
 <div id="bg" style="position:fixed;inset:0;background:#fafafa;background-size:cover;background-position:center;/* no blur - images already blurred */transform:scale(1.03);z-index:0;transition:opacity 500ms ease-in-out;opacity:1"></div>
 <div id="overlay" style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;z-index:10000">
-  <div id="overlayBox" style="background:rgba(0,0,0,0.6);color:#fff;padding:20px 28px;border-radius:8px;font-family:Arial,monospace;font-size:18px;pointer-events:auto;display:none">
+  <div id="overlayBox" style="background:rgba(0,0,0,0.6);color:#fff;padding:20px 28px;border-radius:8px;font-family:Arial,monospace;font-size:18px;pointer-events:auto;display:none;max-width:420px">
     <div id="overlayText">Game Over</div>
-    <div style="margin-top:8px;font-size:13px;color:#ddd">Press SPACE to play again</div>
+    <div id="nameEntry" style="margin-top:12px;display:none">
+      <div style="font-size:14px;color:#ddd;margin-bottom:6px">New high score! Enter your name:</div>
+      <input id="nameInput" type="text" placeholder="Your name" style="padding:8px;border-radius:4px;border:1px solid #444;background:#fff;color:#000;width:100%;box-sizing:border-box;margin-bottom:8px">
+      <div style="display:flex;gap:8px;justify-content:flex-end"><button id="saveNameBtn" style="padding:8px 12px;border-radius:4px;border:none;background:#2ecc71;color:#000;font-weight:700">Save</button></div>
+    </div>
+    <div id="overlayPress" style="margin-top:8px;font-size:13px;color:#ddd">Press SPACE to play again</div>
   </div>
 </div>
 <script>
@@ -184,6 +196,8 @@ function setBackgroundForAnimal(id){
     bgEl.style.backgroundImage = `url(${localChoice})`;
     bgEl.style.opacity = 1;
     dbg('using local park image: '+localChoice + ' -> bgEl.backgroundImage=' + bgEl.style.backgroundImage);
+    // update fun fact if this is a numbered park file
+    setFunFactForFilename(localChoice);
   };
   img.onerror = () => {
     dbg('local park image failed, falling back to Unsplash for: '+q);
@@ -194,6 +208,8 @@ function setBackgroundForAnimal(id){
       bgEl.style.backgroundImage = `url(${url})`;
       bgEl.style.opacity = 1;
       dbg('using Unsplash image: '+url + ' -> bgEl.backgroundImage=' + bgEl.style.backgroundImage);
+      // Unsplash fallback does not have a numbered filename, clear fun fact
+      setFunFactForIndex(null);
     };
     img2.onerror = () => {
       dbg('Unsplash fallback failed; keeping previous background (no neutral fill)');
@@ -204,6 +220,51 @@ function setBackgroundForAnimal(id){
   img.src = localChoice;
 }
 setBackgroundForAnimal(animalId);
+
+// --- Highscore and Fun Fact support ---
+const HIGHSCORE_KEY = 'big5_highscore_v1';
+function loadHighscore(){
+  try{
+    const raw = localStorage.getItem(HIGHSCORE_KEY);
+    if(!raw) return {score:0,name:'---'};
+    return JSON.parse(raw);
+  }catch(e){ return {score:0,name:'---'}; }
+}
+function saveHighscore(name,score){
+  const payload = {name:name||'Player',score:score};
+  try{ localStorage.setItem(HIGHSCORE_KEY, JSON.stringify(payload)); }catch(e){ dbg('failed saving highscore: '+e); }
+  updateHighscoreDisplay();
+}
+function updateHighscoreDisplay(){
+  const hs = loadHighscore();
+  const elName = document.getElementById('hsName');
+  const elScore = document.getElementById('hsScore');
+  if(elName) elName.textContent = hs.name || '---';
+  if(elScore) elScore.textContent = hs.score != null ? hs.score : 0;
+}
+
+// Small set of fun facts for the three numbered park backgrounds (1..3)
+const parkFacts = {
+  1: 'Masai Mara: Known for the Great Migration — millions of wildebeest, zebra and gazelle pass through each year.',
+  2: 'Tsavo: One of Kenya\'s largest parks, famous for wide-open plains and large elephant populations.',
+  3: 'Amboseli: Famous for its views of Mount Kilimanjaro and large herds of free-ranging elephants.'
+};
+function setFunFactForIndex(n){
+  const el = document.getElementById('funFact');
+  if(!el) return;
+  el.textContent = parkFacts[n] || '';
+}
+
+// When background is selected, try to update fun fact where possible.
+function setFunFactForFilename(filename){
+  if(!filename) return;
+  // try to detect a leading digit like '1.png' or 'parks/2.jpg'
+  const m = filename.match(/(?:^|\/)\s*([123])(?:\.|$)/);
+  if(m) setFunFactForIndex(Number(m[1]));
+}
+
+// Initialize highscore display now
+updateHighscoreDisplay();
 
 // Start
 function start(){
@@ -465,8 +526,22 @@ function drawSilhouette(ctx, type, x, baseY, w, h, animFrame){
 
 function gameOver(){
   game.running = false;
-  overlayText.textContent = `Game Over! Score: ${game.score}`;
   overlayBox.style.display = 'block';
+  const overlayTextEl = document.getElementById('overlayText');
+  const nameEntry = document.getElementById('nameEntry');
+  const pressEl = document.getElementById('overlayPress');
+  overlayTextEl.textContent = `Game Over! Score: ${game.score}`;
+  // highscore logic: show name input only if this is a new highscore
+  const hs = loadHighscore();
+  if(game.score > (hs.score || 0)){
+    if(nameEntry) nameEntry.style.display = 'block';
+    if(pressEl) pressEl.textContent = 'New high score! Enter your name and click Save.';
+    // focus input
+    setTimeout(()=>{ const ni = document.getElementById('nameInput'); if(ni) ni.focus(); }, 80);
+  } else {
+    if(nameEntry) nameEntry.style.display = 'none';
+    if(pressEl) pressEl.textContent = 'Press SPACE to play again';
+  }
   // pick a different animal next time
   const old = animalId;
   let tries = 0;
@@ -476,6 +551,18 @@ function gameOver(){
 
 requestAnimationFrame(loop);
 dbg('requested animation frame');
+// hook up name save button
+const saveBtn = document.getElementById('saveNameBtn');
+if(saveBtn){
+  saveBtn.addEventListener('click', ()=>{
+    const ni = document.getElementById('nameInput');
+    const name = ni && ni.value ? ni.value.trim() : 'Player';
+    if(name){ saveHighscore(name, game.score); document.getElementById('nameEntry').style.display='none'; document.getElementById('overlayPress').textContent='Press SPACE to play again'; }
+  });
+}
+// support pressing Enter in the name field
+const nameField = document.getElementById('nameInput');
+if(nameField){ nameField.addEventListener('keydown', (e)=>{ if(e.key === 'Enter'){ e.preventDefault(); const btn = document.getElementById('saveNameBtn'); if(btn) btn.click(); } }); }
 </script>
 </body>
 </html>
