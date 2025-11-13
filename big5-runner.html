@@ -2,18 +2,52 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Big 5 Runner</title>
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
   body,html{height:100%;overflow:hidden;background:#000;font-family:Arial}
   canvas{display:block;margin:auto;background:transparent;image-rendering:pixelated;position:relative;z-index:1}
+  /* Logo overlay (separate from background) */
+  #siteLogo{position:fixed;top:8px;left:8px;height:64px;z-index:2000;pointer-events:none;transition:height 180ms ease,transform 180ms ease;display:block}
+  @media (max-width:480px){
+    #siteLogo{height:40px}
+  }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
+<!-- Site logo (separate from background). Provide a `logo.png` in the same folder. -->
+<img id="siteLogo" src="logo.png" alt="logo" style="position:fixed;top:8px;left:8px;height:64px;z-index:2000;pointer-events:none;transition:height 180ms ease,transform 180ms ease;display:block"> 
+<!-- Language switch (small pills next to the logo) -->
+<div id="langSwitch" style="position:fixed;top:12px;left:86px;z-index:2001;display:flex;gap:6px">
+  <button id="langEn" style="background:#fff;border:1px solid rgba(0,0,0,0.08);border-radius:999px;padding:6px 8px;font-weight:700;cursor:pointer">EN</button>
+  <button id="langIt" style="background:transparent;border:1px solid rgba(0,0,0,0.08);border-radius:999px;padding:6px 8px;font-weight:700;cursor:pointer">IT</button>
+</div>
+
+<!-- Fullscreen language picker shown before the user chooses a language -->
+<div id="languageOverlay" style="position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:linear-gradient(180deg,rgba(0,0,0,0.45),rgba(0,0,0,0.6));z-index:3000">
+  <div style="background:#fff;border-radius:12px;padding:28px;max-width:520px;width:92%;box-shadow:0 12px 40px rgba(0,0,0,0.4);text-align:center;font-family:Roboto,Arial,sans-serif;color:#202124">
+    <h1 id="langOverlayTitle" style="margin:0 0 12px;font-size:22px">Choose your language</h1>
+    <p id="langOverlaySubtitle" style="margin:0 0 20px;color:#5f6368">Select the language you prefer to play in.</p>
+    <div style="display:flex;gap:14px;justify-content:center;flex-wrap:wrap">
+      <button id="chooseEn" style="min-width:140px;padding:12px 16px;border-radius:8px;border:none;background:#1a73e8;color:#fff;font-weight:700;font-size:16px;cursor:pointer">English</button>
+      <button id="chooseIt" style="min-width:140px;padding:12px 16px;border-radius:8px;border:1px solid rgba(0,0,0,0.08);background:transparent;color:#202124;font-weight:700;font-size:16px;cursor:pointer">Italiano</button>
+    </div>
+    <div style="margin-top:18px;color:#5f6368;font-size:13px">You can change language later using the small language pills.</div>
+  </div>
+</div>
 <!-- debug UI removed -->
-<!-- Fun fact box (bottom-right) - hidden until game starts -->
-<div id="funFact" style="display:none;position:fixed;right:8px;bottom:8px;padding:10px 12px;background:rgba(255,255,255,0.9);color:#000;border:1px solid #ddd;font-family:Arial,monospace;z-index:9999;font-size:13px;border-radius:6px;max-width:320px;opacity:0.95">Fun fact will appear here.</div>
+<!-- Fun facts container (hidden until game starts). Will be positioned next to the logo on desktop, below it on mobile -->
+<div id="funFactsContainer" style="display:none;position:fixed;z-index:2000;pointer-events:auto">
+  <div id="funFactCard" style="background:#fff;color:#202124;border-radius:12px;box-shadow:0 6px 18px rgba(60,64,67,0.15);border:1px solid rgba(60,64,67,0.08);padding:12px 14px;max-width:380px;font-family:Roboto,Arial,sans-serif">
+      <div id="funFactTitle" style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <div style="width:36px;height:36px;border-radius:8px;background:linear-gradient(135deg,#1a73e8,#4285f4);display:flex;align-items:center;justify-content:center;color:white;font-weight:700;font-size:16px">i</div>
+        <div id="funFactTitleText" style="font-weight:700;color:#202124;font-size:14px">Did you know?</div>
+      </div>
+    <div id="funFactText" style="font-size:13px;line-height:1.3;color:#3c4043">Fun fact will appear here.</div>
+  </div>
+</div>
 <div id="bg" style="position:fixed;inset:0;background:#fafafa;background-size:cover;background-position:center;/* no blur - images already blurred */transform:scale(1.03);z-index:0;transition:opacity 500ms ease-in-out;opacity:1"></div>
 <div id="overlay" style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;z-index:10000">
   <div id="overlayBox" style="background:rgba(0,0,0,0.6);color:#fff;padding:20px 28px;border-radius:8px;font-family:Arial,monospace;font-size:18px;pointer-events:auto;display:none;max-width:420px">
@@ -43,14 +77,50 @@ function resize(){
   canvas.height = innerHeight*dpr;
   canvas.style.width = innerWidth+'px';
   canvas.style.height = innerHeight+'px';
+  // avoid touch gestures on canvas causing scroll/zoom on some devices
+  try{ canvas.style.touchAction = 'none'; }catch(e){}
   // Reset transform then set proper devicePixelRatio scale (avoid cumulative scaling)
   if (ctx.setTransform) ctx.setTransform(dpr,0,0,dpr,0,0);
   else ctx.scale(dpr,dpr);
   // don't reference `game` here — it may not be initialized yet
   dbg(`resize dpr=${dpr} cssx=${innerWidth}x${innerHeight} canvasPx=${canvas.width}x${canvas.height}`);
+
+  // Responsive: adjust logo size/position when resizing
+  try{
+    const logo = document.getElementById('siteLogo');
+    if(logo){
+      if(window.innerWidth <= 480){
+        logo.style.height = '40px';
+        logo.style.left = '8px';
+        logo.style.top = '8px';
+      } else {
+        logo.style.height = '64px';
+        logo.style.left = '8px';
+        logo.style.top = '8px';
+      }
+    }
+  }catch(e){}
 }
 resize();
 window.addEventListener('resize',resize);
+window.addEventListener('resize', layoutFunFacts);
+
+// Show language overlay if language not selected yet
+function showLanguageOverlayIfNeeded(){
+  const overlay = document.getElementById('languageOverlay');
+  if(!overlay) return;
+  // if user already chose language previously, don't show
+  try{ const saved = localStorage.getItem(LANG_KEY); if(saved) { overlay.style.display='none'; return; } }catch(e){}
+  overlay.style.display = 'flex';
+}
+showLanguageOverlayIfNeeded();
+
+// wire overlay buttons
+const chooseEn = document.getElementById('chooseEn');
+const chooseIt = document.getElementById('chooseIt');
+function pickLang(lang){ currentLang = lang; try{ localStorage.setItem(LANG_KEY, lang); }catch(e){} updateLangUI(); const overlay = document.getElementById('languageOverlay'); if(overlay) overlay.style.display='none'; }
+if(chooseEn) chooseEn.addEventListener('click', ()=> pickLang('en'));
+if(chooseIt) chooseIt.addEventListener('click', ()=> pickLang('it'));
 
 // Game state
 let game = {running:false, speed:0, score:0, frame:0, ground:0, groundOffset:0, spawnCooldown:0};
@@ -141,6 +211,25 @@ window.addEventListener('keyup', e => {
   keys[e.key] = false;
 });
 
+// Touch / pointer support for mobile: tap to jump / start
+function onPointerDown(e){
+  // prevent default to avoid page scrolling on touch
+  if(e && e.preventDefault) e.preventDefault();
+  if (!spacePressed) {
+    spacePressed = true;
+    if (!game.running) start();
+    else if (!player.jumping) jump();
+  }
+}
+function onPointerUp(e){
+  if(e && e.preventDefault) e.preventDefault();
+  spacePressed = false;
+}
+window.addEventListener('touchstart', onPointerDown, {passive:false});
+window.addEventListener('touchend', onPointerUp, {passive:false});
+window.addEventListener('pointerdown', onPointerDown);
+window.addEventListener('pointerup', onPointerUp);
+
 const bgEl = document.getElementById('bg');
 const overlayBox = document.getElementById('overlayBox');
 const overlayText = document.getElementById('overlayText');
@@ -158,6 +247,10 @@ function setBackgroundForAnimal(id){
     const img = new Image();
     img.onload = () => {
       bgEl.style.backgroundImage = `url(${file})`;
+      // responsive adjustments
+      bgEl.style.backgroundSize = 'cover';
+      bgEl.style.backgroundPosition = window.innerWidth <= 480 ? 'center top' : 'center center';
+      bgEl.style.transform = window.innerWidth <= 480 ? 'scale(1)' : 'scale(1.03)';
       bgEl.style.opacity = 1;
       dbg('using local park image: '+file);
       // update fun fact for this numbered park
@@ -185,6 +278,9 @@ function setBackgroundForAnimal(id){
   const img = new Image();
   img.onload = () => {
     bgEl.style.backgroundImage = `url(${localChoice})`;
+    bgEl.style.backgroundSize = 'cover';
+    bgEl.style.backgroundPosition = window.innerWidth <= 480 ? 'center top' : 'center center';
+    bgEl.style.transform = window.innerWidth <= 480 ? 'scale(1)' : 'scale(1.03)';
     bgEl.style.opacity = 1;
     dbg('using local park image: '+localChoice + ' -> bgEl.backgroundImage=' + bgEl.style.backgroundImage);
     // update fun fact if this is a numbered park file
@@ -197,6 +293,9 @@ function setBackgroundForAnimal(id){
     img2.crossOrigin = 'anonymous';
     img2.onload = () => {
       bgEl.style.backgroundImage = `url(${url})`;
+      bgEl.style.backgroundSize = 'cover';
+      bgEl.style.backgroundPosition = window.innerWidth <= 480 ? 'center top' : 'center center';
+      bgEl.style.transform = window.innerWidth <= 480 ? 'scale(1)' : 'scale(1.03)';
       bgEl.style.opacity = 1;
       dbg('using Unsplash image: '+url + ' -> bgEl.backgroundImage=' + bgEl.style.backgroundImage);
       // Unsplash fallback does not have a numbered filename, clear fun fact
@@ -234,24 +333,142 @@ function updateHighscoreDisplay(){
   if(elScore) elScore.textContent = hs.score != null ? hs.score : 0;
 }
 
-// Small set of fun facts for the three numbered park backgrounds (1..3)
+// Fun facts per park (each park has multiple facts to rotate)
 const parkFacts = {
-  1: 'Masai Mara: Known for the Great Migration — millions of wildebeest, zebra and gazelle pass through each year.',
-  2: 'Tsavo: One of Kenya\'s largest parks, famous for wide-open plains and large elephant populations.',
-  3: 'Amboseli: Famous for its views of Mount Kilimanjaro and large herds of free-ranging elephants.'
+  1: [
+    'Masai Mara: Known for the Great Migration — millions of wildebeest, zebra and gazelle pass through each year.',
+    'Masai Mara: Home to the Big Five — lion, leopard, elephant, rhino and buffalo.',
+    'Masai Mara: It borders the Serengeti in Tanzania, creating a large transboundary ecosystem.'
+  ],
+  2: [
+    'Tsavo: One of Kenya\'s largest parks, famous for wide-open plains and large elephant populations.',
+    'Tsavo: Historically known as the “land of red elephants” because of the reddish dust that coats animals there.',
+    'Tsavo: It\'s actually two parks (East and West) connected by wildlife corridors.'
+  ],
+  3: [
+    'Amboseli: Famous for its views of Mount Kilimanjaro and large herds of free-ranging elephants.',
+    'Amboseli: Known for excellent elephant photography — the park has plains and wetlands.',
+    'Amboseli: Local Maasai communities live around the park and play a role in conservation.'
+  ]
 };
+
+// current fun facts state
+let currentFunFacts = [];
+let currentFunIndex = 0;
+let funFactsInterval = null;
+
 function setFunFactForIndex(n){
-  const el = document.getElementById('funFact');
-  if(!el) return;
-  el.textContent = parkFacts[n] || '';
+  currentFunFacts = parkFacts[n] || [];
+  currentFunIndex = 0;
+  if(currentFunFacts.length > 0) showFunFact(currentFunFacts[0]);
 }
 
-// When background is selected, try to update fun fact where possible.
 function setFunFactForFilename(filename){
   if(!filename) return;
-  // try to detect a leading digit like '1.png' or 'parks/2.jpg'
   const m = filename.match(/(?:^|\/)\s*([123])(?:\.|$)/);
   if(m) setFunFactForIndex(Number(m[1]));
+}
+
+// Simple i18n support for English and Italian
+let currentLang = 'en';
+const i18n = {
+  en: {
+    didYouKnow: 'Did you know?',
+    newHighScorePrompt: 'New high score! Enter your name:',
+    pressSpace: 'Press SPACE to play again',
+    gameOver: 'Game Over! Score:'
+  },
+  it: {
+    didYouKnow: 'Lo sapevi?',
+    newHighScorePrompt: 'Nuovo record! Inserisci il tuo nome:',
+    pressSpace: 'Premi SPAZIO per giocare di nuovo',
+    gameOver: 'Fine del gioco! Punteggio:'
+  }
+};
+
+// localized park facts (same structure as parkFacts but per language)
+const parkFacts_i18n = {
+  en: parkFacts,
+  it: {
+    1: [
+      'Masai Mara: Conosciuta per la Grande Migrazione — milioni di gnu, zebre e gazzelle che la attraversano ogni anno.',
+      'Masai Mara: Ospita i Big Five — leone, leopardo, elefante, rinoceronte e buffalo.',
+      'Masai Mara: Confina con il Serengeti in Tanzania, creando un grande ecosistema transfrontaliero.'
+    ],
+    2: [
+      'Tsavo: Uno dei parchi più grandi del Kenya, famoso per le pianure e le grandi popolazioni di elefanti.',
+      'Tsavo: Storicamente noto come «terra degli elefanti rossi» a causa della polvere rossastra.',
+      'Tsavo: In realtà è composto da due parchi (Est e Ovest) collegati da corridoi per la fauna.'
+    ],
+    3: [
+      'Amboseli: Famoso per le sue vedute del Kilimanjaro e le grandi mandrie di elefanti.',
+      'Amboseli: Conosciuto per l\'eccellente fotografia degli elefanti — il parco ha pianure e zone umide.',
+      'Amboseli: Le comunità Maasai vivono intorno al parco e partecipano alla conservazione.'
+    ]
+  }
+};
+
+function t(key){ return (i18n[currentLang] && i18n[currentLang][key]) || i18n['en'][key] || '' }
+
+// Persisted language preference key
+const LANG_KEY = 'big5_lang_v1';
+// load saved language if present
+try{ const saved = localStorage.getItem(LANG_KEY); if(saved) currentLang = saved; }catch(e){}
+
+function showFunFact(text){
+  const el = document.getElementById('funFactText');
+  if(!el) return;
+  el.textContent = text || '';
+}
+
+function startFunFactsRotation(){
+  stopFunFactsRotation();
+  if(!currentFunFacts || currentFunFacts.length === 0) return;
+  funFactsInterval = setInterval(()=>{
+    currentFunIndex = (currentFunIndex + 1) % currentFunFacts.length;
+    showFunFact(currentFunFacts[currentFunIndex]);
+  }, 10000); // rotate every 10s
+}
+
+function stopFunFactsRotation(){
+  if(funFactsInterval){ clearInterval(funFactsInterval); funFactsInterval = null; }
+}
+
+function layoutFunFacts(){
+  const container = document.getElementById('funFactsContainer');
+  const logo = document.getElementById('siteLogo');
+  if(!container || !logo) return;
+  const lr = logo.getBoundingClientRect();
+  if(window.innerWidth <= 480){
+    // mobile: below logo, full width minus margins
+    container.style.left = '8px';
+    container.style.top = (lr.bottom + 8) + 'px';
+    container.style.right = '';
+    const card = document.getElementById('funFactCard'); if(card) card.style.maxWidth = 'calc(100% - 16px)';
+  } else {
+    // desktop: to the right of logo
+    container.style.top = (lr.top) + 'px';
+    container.style.left = (lr.right + 12) + 'px';
+    container.style.right = '';
+    const card = document.getElementById('funFactCard'); if(card) card.style.maxWidth = '380px';
+  }
+}
+
+function startFunFacts(){
+  const container = document.getElementById('funFactsContainer');
+  if(container){ container.style.display = 'block'; }
+  layoutFunFacts();
+  // ensure facts are taken from the correct language set
+  currentFunFacts = (parkFacts_i18n[currentLang] && parkFacts_i18n[currentLang][SINGLE_PARK_INDEX]) || [];
+  currentFunIndex = 0;
+  if(currentFunFacts.length > 0) showFunFact(currentFunFacts[0]);
+  startFunFactsRotation();
+}
+
+function stopFunFacts(){
+  const container = document.getElementById('funFactsContainer');
+  if(container){ container.style.display = 'none'; }
+  stopFunFactsRotation();
 }
 
 // Initialize highscore display now
@@ -270,11 +487,20 @@ function start(){
   // spawn soon after starting so player has something to jump
   game.spawnCooldown = 30;
   overlayBox.style.display = 'none';
-  // show fun fact when the game starts (for the selected single park)
-  const ff = document.getElementById('funFact');
-  if(ff){
-    setFunFactForIndex(SINGLE_PARK_INDEX);
-    ff.style.display = 'block';
+  // show and start rotating fun facts for the selected single park
+  setFunFactForIndex(SINGLE_PARK_INDEX);
+  // update UI text to current language
+  const titleEl = document.getElementById('funFactTitleText'); if(titleEl) titleEl.textContent = t('didYouKnow');
+  startFunFacts();
+  // make overlay input/button larger on small screens for easy tapping
+  const ni = document.getElementById('nameInput');
+  const sb = document.getElementById('saveNameBtn');
+  if(window.innerWidth <= 480){
+    if(ni) ni.style.fontSize = '18px';
+    if(sb){ sb.style.padding = '12px 16px'; sb.style.fontSize = '16px'; }
+  } else {
+    if(ni) ni.style.fontSize = '';
+    if(sb){ sb.style.padding = ''; sb.style.fontSize = ''; }
   }
 }
 
@@ -531,17 +757,17 @@ function gameOver(){
   const overlayTextEl = document.getElementById('overlayText');
   const nameEntry = document.getElementById('nameEntry');
   const pressEl = document.getElementById('overlayPress');
-  overlayTextEl.textContent = `Game Over! Score: ${game.score}`;
+  overlayTextEl.textContent = `${t('gameOver')} ${game.score}`;
   // highscore logic: show name input only if this is a new highscore
   const hs = loadHighscore();
   if(game.score > (hs.score || 0)){
     if(nameEntry) nameEntry.style.display = 'block';
-    if(pressEl) pressEl.textContent = 'New high score! Enter your name and click Save.';
+    if(pressEl) pressEl.textContent = t('newHighScorePrompt');
     // focus input
     setTimeout(()=>{ const ni = document.getElementById('nameInput'); if(ni) ni.focus(); }, 80);
   } else {
     if(nameEntry) nameEntry.style.display = 'none';
-    if(pressEl) pressEl.textContent = 'Press SPACE to play again';
+    if(pressEl) pressEl.textContent = t('pressSpace');
   }
   // pick a different animal next time
   const old = animalId;
@@ -564,6 +790,29 @@ if(saveBtn){
 // support pressing Enter in the name field
 const nameField = document.getElementById('nameInput');
 if(nameField){ nameField.addEventListener('keydown', (e)=>{ if(e.key === 'Enter'){ e.preventDefault(); const btn = document.getElementById('saveNameBtn'); if(btn) btn.click(); } }); }
+
+// logo fallback: if `logo.png` is missing hide the element so it doesn't show a broken image
+const logoEl = document.getElementById('siteLogo');
+if(logoEl){ logoEl.onerror = ()=>{ try{ logoEl.style.display = 'none'; }catch(e){} }; }
+// ensure fun facts layout is correct on first paint
+setTimeout(()=>{ try{ layoutFunFacts(); }catch(e){} }, 120);
+
+// language switch handlers
+const btnEn = document.getElementById('langEn');
+const btnIt = document.getElementById('langIt');
+function updateLangUI(){
+  // toggle button styles
+  if(btnEn) btnEn.style.background = currentLang === 'en' ? '#1a73e8' : (currentLang === 'it' ? 'transparent' : 'transparent');
+  if(btnEn) btnEn.style.color = currentLang === 'en' ? '#fff' : '#000';
+  if(btnIt) btnIt.style.background = currentLang === 'it' ? '#1a73e8' : 'transparent';
+  if(btnIt) btnIt.style.color = currentLang === 'it' ? '#fff' : '#000';
+  // update fun-fact title
+  const titleEl = document.getElementById('funFactTitleText'); if(titleEl) titleEl.textContent = t('didYouKnow');
+}
+if(btnEn) btnEn.addEventListener('click', ()=>{ currentLang='en'; updateLangUI(); // reload facts in new language
+  setFunFactForIndex(SINGLE_PARK_INDEX); startFunFacts(); });
+if(btnIt) btnIt.addEventListener('click', ()=>{ currentLang='it'; updateLangUI(); setFunFactForIndex(SINGLE_PARK_INDEX); startFunFacts(); });
+updateLangUI();
 </script>
 </body>
 </html>
