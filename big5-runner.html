@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Big 5 Runner</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body,html{height:100%;overflow:hidden;background:#000;font-family:Arial}
+  canvas{display:block;margin:auto;background:transparent;image-rendering:pixelated;position:relative;z-index:1}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="debug" style="position:fixed;left:8px;top:8px;padding:8px;background:rgba(255,255,255,0.9);color:#000;border:1px solid #ddd;font-family:monospace;z-index:9999;max-width:40%;font-size:13px;line-height:1.2"></div>
+<div id="bg" style="position:fixed;inset:0;background:#fafafa;background-size:cover;background-position:center;/* no blur - images already blurred */transform:scale(1.03);z-index:0;transition:opacity 500ms ease-in-out;opacity:1"></div>
+<div id="overlay" style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;z-index:10000">
+  <div id="overlayBox" style="background:rgba(0,0,0,0.6);color:#fff;padding:20px 28px;border-radius:8px;font-family:Arial,monospace;font-size:18px;pointer-events:auto;display:none">
+    <div id="overlayText">Game Over</div>
+    <div style="margin-top:8px;font-size:13px;color:#ddd">Press SPACE to play again</div>
+  </div>
+</div>
+<script>
+// Lightweight debug helper (will be removed later)
+const debugEl = document.getElementById('debug');
+function dbg(msg){
+  try{ console.log(msg); }catch(e){}
+  if(debugEl){
+    debugEl.textContent = String(msg);
+  }
+}
+dbg('script start');
+window.addEventListener('error', e => dbg('ERROR: '+(e && e.message)));
+window.addEventListener('unhandledrejection', e => dbg('PromiseRejection: '+(e && e.reason)));
+// Canvas
+const canvas = document.getElementById('c');
+if(!canvas){ dbg('Canvas element not found'); }
+const ctx = canvas.getContext('2d');
+if(!ctx){ dbg('2D context not available'); }
+function resize(){
+  const dpr = window.devicePixelRatio||1;
+  canvas.width = innerWidth*dpr;
+  canvas.height = innerHeight*dpr;
+  canvas.style.width = innerWidth+'px';
+  canvas.style.height = innerHeight+'px';
+  // Reset transform then set proper devicePixelRatio scale (avoid cumulative scaling)
+  if (ctx.setTransform) ctx.setTransform(dpr,0,0,dpr,0,0);
+  else ctx.scale(dpr,dpr);
+  // don't reference `game` here — it may not be initialized yet
+  dbg(`resize dpr=${dpr} cssx=${innerWidth}x${innerHeight} canvasPx=${canvas.width}x${canvas.height}`);
+}
+resize();
+window.addEventListener('resize',resize);
+
+// Game state
+let game = {running:false, speed:0, score:0, frame:0, ground:0, groundOffset:0, spawnCooldown:0};
+let player = {x:80, y:0, vy:0, jumping:false, crouching:false, frame:0, tick:0};
+let obstacles = [];
+
+// Animals and park backgrounds
+const animals = ['Lion','Leopard','Buffalo','Elephant','Rhino'];
+let animalId = Math.floor(Math.random()*animals.length);
+// Always use a single park background file when true (use `N.png` in project root)
+const USE_SINGLE_PARK = true;
+const SINGLE_PARK_INDEX = 1; // set to 1, 2, or 3 to choose which root-numbered background to use
+const parkQueries = {
+  'Lion':'masai mara national reserve kenya',
+  'Leopard':'samburu national reserve kenya',
+  'Buffalo':'tsavo national park kenya',
+  'Elephant':'amboseli national park kenya',
+  'Rhino':'lake nakuru national park kenya'
+};
+// list of parks for random background selection (broader list)
+const parks = [
+  'masai mara national reserve kenya',
+  'samburu national reserve kenya',
+  'tsavo national park kenya',
+  'amboseli national park kenya',
+  'lake nakuru national park kenya',
+  'ol pejeta conservancy kenya',
+  'meru national park kenya',
+  'samburu kenya landscape',
+  'mount kenya national park kenya',
+  'hells gate national park kenya'
+];
+const colors = ['#000','#000','#000','#000','#000']; // silhouettes are black
+
+// try to load per-animal local silhouette images from the current folder first,
+// then check common subfolders like ./animals/ or ./animal/ or ./silhouettes/
+const silImages = {};
+function loadSilhouettes(){
+  // First try numbered files (1..N) matching the animals array order
+  animals.forEach((name, idx) => {
+    const num = idx + 1;
+    // build candidates for several common extensions and locations
+    // NOTE: do NOT treat project-root numeric files (1/2/3) as animal images.
+    // Numeric files are reserved for park backgrounds. Only use name-based
+    // image files for animal silhouettes, and fall back to subfolders.
+    const exts = ['.png', '.jpg', '.jpeg', '.webp'];
+    const candidates = [];
+    // root-name variants (try lowercase and exact name)
+    exts.forEach(ext => {
+      candidates.push(`${name.toLowerCase()}${ext}`);
+      candidates.push(`${name}${ext}`);
+    });
+    // fallbacks in common subfolders
+    exts.forEach(ext => {
+      candidates.push(`animals/${name.toLowerCase()}${ext}`);
+      candidates.push(`animal/${name.toLowerCase()}${ext}`);
+      candidates.push(`silhouettes/${name.toLowerCase()}${ext}`);
+    });
+
+    (function tryNext(i){
+      if(i >= candidates.length){ dbg('no local silhouette found for: '+name); return; }
+      const file = candidates[i];
+      const img = new Image();
+      img.onload = () => { silImages[name] = img; dbg('loaded silhouette: '+file); };
+      img.onerror = () => { tryNext(i+1); };
+      img.src = file;
+    })(0);
+  });
+}
+loadSilhouettes();
+
+// Input
+let keys = {};
+let spacePressed = false;
+window.addEventListener('keydown', e => {
+  if (e.key === ' ') {
+    e.preventDefault();
+    if (!spacePressed) {
+      spacePressed = true;
+      if (!game.running) start();
+      else if (!player.jumping) jump();
+    }
+  }
+  keys[e.key] = true;
+});
+window.addEventListener('keyup', e => {
+  if (e.key === ' ') spacePressed = false;
+  keys[e.key] = false;
+});
+
+const bgEl = document.getElementById('bg');
+const overlayBox = document.getElementById('overlayBox');
+const overlayText = document.getElementById('overlayText');
+
+function setBackgroundForAnimal(id){
+  // If configured to use a single park, always use that park for the
+  // background (try local numbered files for that park first, then
+  // fallback to Unsplash for that park). Otherwise, pick a park based on
+  // the animal (preferred park usually) or random fallback.
+  bgEl.style.opacity = 0;
+  if (typeof USE_SINGLE_PARK !== 'undefined' && USE_SINGLE_PARK) {
+    const parkNum = Math.max(1, Math.min(3, Number(SINGLE_PARK_INDEX) || 1));
+    // Use only the root file `N.png` for the park (no Unsplash fallback).
+    const file = `${parkNum}.png`;
+    const img = new Image();
+    img.onload = () => {
+      bgEl.style.backgroundImage = `url(${file})`;
+      bgEl.style.opacity = 1;
+      dbg('using local park image: '+file);
+    };
+    img.onerror = () => {
+      dbg('local park image '+file+' not found; keeping previous background');
+      // keep previous background visible; do not fall back to Unsplash or neutral fill
+      bgEl.style.opacity = 1;
+    };
+    img.src = file;
+    return;
+  }
+
+  // non-single-park behavior (pick based on animal)
+  const name = animals[id];
+  const preferred = parkQueries[name];
+  const usePreferred = Math.random() < 0.7; // usually use the preferred park
+  const q = usePreferred && preferred ? preferred : parks[Math.floor(Math.random()*parks.length)];
+  const parkExts = ['.png','.jpg','.jpeg','.webp'];
+  const localImages = [];
+  [1,2,3].forEach(n => parkExts.forEach(ext => localImages.push(`${n}${ext}`)));
+  [1,2,3].forEach(n => parkExts.forEach(ext => localImages.push(`parks/${n}${ext}`)));
+  const localChoice = localImages[Math.floor(Math.random()*localImages.length)];
+  const img = new Image();
+  img.onload = () => {
+    bgEl.style.backgroundImage = `url(${localChoice})`;
+    bgEl.style.opacity = 1;
+    dbg('using local park image: '+localChoice + ' -> bgEl.backgroundImage=' + bgEl.style.backgroundImage);
+  };
+  img.onerror = () => {
+    dbg('local park image failed, falling back to Unsplash for: '+q);
+    const url = 'https://source.unsplash.com/1600x900/?' + encodeURIComponent(q);
+    const img2 = new Image();
+    img2.crossOrigin = 'anonymous';
+    img2.onload = () => {
+      bgEl.style.backgroundImage = `url(${url})`;
+      bgEl.style.opacity = 1;
+      dbg('using Unsplash image: '+url + ' -> bgEl.backgroundImage=' + bgEl.style.backgroundImage);
+    };
+    img2.onerror = () => {
+      dbg('Unsplash fallback failed; keeping previous background (no neutral fill)');
+      bgEl.style.opacity = 1;
+    };
+    img2.src = url;
+  };
+  img.src = localChoice;
+}
+setBackgroundForAnimal(animalId);
+
+// Start
+function start(){
+  game.running = true;
+  // lower base speed so obstacles aren't too fast initially
+  game.speed = 10;
+  game.score = 0;
+  game.frame = 0;
+  player.y = player.vy = 0;
+  player.jumping = player.crouching = false;
+  obstacles = [];
+  // spawn soon after starting so player has something to jump
+  game.spawnCooldown = 30;
+  overlayBox.style.display = 'none';
+}
+
+// Jump
+function jump(){
+  if (player.jumping) return;
+  player.jumping = true;
+  // positive vy moves the player upwards (player.y is vertical displacement above ground)
+  player.vy = 26;
+}
+
+// Spawn obstacle
+function spawn(){
+  const type = Math.random() < 0.7 ? 'cactus' : 'bird';
+  // compute CSS pixels to place obstacle relative to visible canvas size
+  const dpr = window.devicePixelRatio||1;
+  const cw = canvas.width / dpr;
+  const ch = canvas.height / dpr;
+  const ground = ch - 100;
+  const oW = type==='cactus' ? 40 : 70;
+  const oH = type==='cactus' ? 70 : 50;
+  obstacles.push({
+    // spawn further out so player has time to react
+    x: cw + 200,
+    y: type==='cactus' ? (ground - oH) : (ground - 80),
+    w: oW,
+    h: oH,
+    type,
+    passed: false
+  });
+}
+
+// Main loop
+let last = 0;
+function loop(ts){
+  const dt = Math.min((ts-last)/16.67,3); last=ts;
+  if(game.running) update(dt);
+  render();
+  requestAnimationFrame(loop);
+}
+
+// Update
+function update(dt){
+  game.frame++;
+  game.speed += 0.001*dt;
+
+  // ensure ground is known here (update uses it for collision checks)
+  const dpr = window.devicePixelRatio||1;
+  const ch = canvas.height / dpr;
+  game.ground = ch - 100;
+
+  // Player physics
+  if(player.jumping){
+    // gravity reduces upward velocity
+    player.vy -= 1.8*dt;
+    player.y += player.vy*dt;
+    // landing when y falls back to 0 or below
+    if(player.y <= 0){
+      player.y = 0;
+      player.jumping = false;
+      player.vy = 0;
+    }
+  }
+  player.crouching = keys['ArrowDown'] && player.y === 0;
+
+  // Animation
+  player.tick += dt;
+  if(player.tick > 6){
+    player.tick = 0;
+    player.frame = (player.frame+1)%2;
+  }
+
+  // Spawn using a cooldown (frame-based) so spacing is easier to control
+  if (game.spawnCooldown <= 0) {
+    // bias toward ground obstacles so players can jump them
+    // sometimes spawn a bird for variety
+    const roll = Math.random();
+    // make cactus more common
+    if (roll < 0.85) {
+      spawn();
+    } else {
+      // force a bird spawn occasionally
+      const typeBackup = Math.random();
+      // temporary small hack: spawn normally but let spawn() choose type; we'll just call spawn()
+      spawn();
+    }
+    // set next cooldown (frames). As game speeds up, reduce cooldown.
+    const minCd = Math.max(20, Math.floor(50 - game.speed));
+    const maxCd = Math.max(40, Math.floor(120 - game.speed));
+    game.spawnCooldown = Math.floor(minCd + Math.random() * (maxCd - minCd));
+  } else {
+    game.spawnCooldown--;
+  }
+
+  // move ground offset to simulate forward motion
+  // slow movement factor to make obstacles/tracking feel less twitchy
+  const speedFactor = 0.6;
+  game.groundOffset = (game.groundOffset + game.speed*dt*speedFactor) % 40;
+
+  // Move & check obstacles
+  for(let i=obstacles.length-1; i>=0; i--){
+    const o = obstacles[i];
+    // move obstacles using the same reduced speed factor
+    o.x -= game.speed*dt*speedFactor;
+    if(o.x + o.w < 0) { obstacles.splice(i,1); continue; }
+
+    const ph = player.crouching ? 20 : 32;
+    const py = game.ground - player.y - ph;
+    if(player.x < o.x+o.w && player.x+32 > o.x && py < o.y+o.h && py+ph > o.y){
+      gameOver();
+    }
+
+    if(!o.passed && o.x + o.w < player.x){
+      o.passed = true;
+      game.score++;
+    }
+  }
+}
+
+// Render
+function render(){
+  const cw = canvas.width/(window.devicePixelRatio||1);
+  const ch = canvas.height/(window.devicePixelRatio||1);
+  ctx.clearRect(0,0,cw,ch);
+
+  game.ground = ch - 100;
+  ctx.fillStyle = '#000';
+  // draw moving ground segments to simulate movement
+  const segW = 20;
+  const off = Math.floor(game.groundOffset % segW);
+  for(let x = -off; x < cw; x += segW){
+    ctx.fillRect(x, game.ground, Math.floor(segW*0.6), 4);
+  }
+
+  // === DISTINCT PIXEL-ART ANIMAL ===
+  const baseX = player.x;
+  const pH = player.crouching ? 20 : 32; // player height
+  const pW = 32; // player width
+  // small running bob when on ground so the figure appears to move
+  const runBob = (!player.jumping && game.running) ? Math.sin(game.frame*0.35)*2 : 0;
+  const baseY = game.ground - player.y - pH + runBob;
+
+  // draw silhouette for current animal
+  drawSilhouette(ctx, animals[animalId], baseX, baseY, pW, pH, player.frame);
+
+  // === OBSTACLES ===
+  ctx.fillStyle = '#333';
+  obstacles.forEach(o => {
+    if(o.type === 'cactus'){
+      // draw cactus as two columns using its width
+      const colW = Math.floor(o.w/2.5);
+      ctx.fillRect(o.x, o.y, colW, o.h);
+      ctx.fillRect(o.x + (o.w - colW), o.y + 20, colW, Math.max(6, o.h - 40));
+    } else {
+      const wing = Math.sin(game.frame*0.2)*6;
+      // draw bird using its width
+      ctx.fillRect(o.x + Math.floor(o.w*0.2), o.y + 20 + wing, Math.floor(o.w*0.6), 12);
+      ctx.fillRect(o.x + Math.floor(o.w*0.2), o.y + 36 - wing, Math.floor(o.w*0.6), 12);
+    }
+  });
+
+  // Score
+  ctx.fillStyle = '#000';
+  ctx.font = '20px Arial';
+  ctx.fillText(`HI 00000  ${('00000'+game.score).slice(-5)}`, cw-220, 30);
+}
+
+// Draw rough silhouettes for each animal. These are stylized shapes (not photo-real),
+// but they provide recognizable silhouettes for the Big Five.
+function drawSilhouette(ctx, type, x, baseY, w, h, animFrame){
+  // Improved silhouette drawing: more detailed and proportional shapes
+  ctx.save();
+  // if a local image exists for this animal, draw it instead (better realism)
+  if(silImages[type]){
+    const si = silImages[type];
+    // scale image to roughly cover the player's box; keep aspect by using dstH
+    const dstH = h * 1.6;
+    const dstW = w * 1.8;
+    const dx = x - (dstW - w)/2;
+    const dy = baseY - (dstH - h);
+    ctx.drawImage(si, dx, dy, dstW, dstH);
+    ctx.restore();
+    return;
+  }
+  // use white fill with dark shadow to ensure silhouette is visible over varied backgrounds
+  ctx.fillStyle = '#fff';
+  ctx.translate(x, baseY);
+  const scale = (w/32);
+  ctx.scale(scale, scale);
+  ctx.shadowColor = 'rgba(0,0,0,0.7)';
+  ctx.shadowBlur = 6;
+
+  if(type === 'Lion'){
+    // more detailed lion silhouette (mane, body, tail)
+    ctx.beginPath();
+    ctx.moveTo(2,8);
+    ctx.bezierCurveTo(6,2,12,0,20,2);
+    ctx.bezierCurveTo(26,3,32,8,34,10);
+    ctx.bezierCurveTo(35,11,36,13,36,15);
+    ctx.bezierCurveTo(36,17,34,20,30,22);
+    ctx.bezierCurveTo(24,25,14,26,6,24);
+    ctx.bezierCurveTo(2,23,1,20,2,16);
+    ctx.closePath();
+    ctx.fill();
+    // head/mane
+    ctx.beginPath(); ctx.arc(31,7,6,0,Math.PI*2); ctx.fill();
+    // tail
+    ctx.beginPath(); ctx.moveTo(4,14); ctx.quadraticCurveTo(-4,12,-2,8); ctx.lineTo(0,9); ctx.fill();
+  } else if(type === 'Leopard'){
+    // sleek cat silhouette
+    ctx.beginPath();
+    ctx.moveTo(2,10);
+    ctx.quadraticCurveTo(8,4,16,4);
+    ctx.quadraticCurveTo(24,4,30,8);
+    ctx.quadraticCurveTo(34,10,35,13);
+    ctx.quadraticCurveTo(34,16,30,18);
+    ctx.quadraticCurveTo(24,21,16,22);
+    ctx.quadraticCurveTo(8,22,4,20);
+    ctx.quadraticCurveTo(1,18,2,14);
+    ctx.closePath(); ctx.fill();
+    // tail
+    ctx.beginPath(); ctx.moveTo(4,12); ctx.quadraticCurveTo(-6,8,-2,4); ctx.fill();
+  } else if(type === 'Buffalo'){
+    // strong body with horns
+    ctx.beginPath(); ctx.moveTo(2,14); ctx.quadraticCurveTo(8,6,18,6); ctx.quadraticCurveTo(28,6,34,12);
+    ctx.quadraticCurveTo(36,14,36,17); ctx.quadraticCurveTo(36,20,32,22);
+    ctx.quadraticCurveTo(24,26,12,26); ctx.quadraticCurveTo(6,26,2,24); ctx.closePath(); ctx.fill();
+    // horns
+    ctx.beginPath(); ctx.moveTo(32,10); ctx.lineTo(40,6); ctx.lineTo(38,6); ctx.lineTo(34,9); ctx.fill();
+  } else if(type === 'Giraffe'){
+    // body and long neck
+    ctx.beginPath(); ctx.moveTo(2,18); ctx.quadraticCurveTo(10,12,18,12); ctx.quadraticCurveTo(28,12,34,10);
+    ctx.quadraticCurveTo(36,9,36,6); ctx.lineTo(36,-6); ctx.quadraticCurveTo(34,-10,30,-10); ctx.quadraticCurveTo(26,-10,24,-6);
+    ctx.lineTo(22,-2); ctx.lineTo(20,-6); ctx.lineTo(18,-2); ctx.closePath(); ctx.fill();
+    // legs
+    ctx.fillRect(4,18,3,8); ctx.fillRect(12,18,3,8); ctx.fillRect(22,18,3,8); ctx.fillRect(30,18,3,8);
+  } else if(type === 'Rhino'){
+    // heavy body and horn
+    ctx.beginPath(); ctx.moveTo(2,14); ctx.quadraticCurveTo(10,8,20,8); ctx.quadraticCurveTo(28,8,34,12);
+    ctx.quadraticCurveTo(36,14,36,18); ctx.quadraticCurveTo(34,22,28,24); ctx.quadraticCurveTo(18,26,8,24); ctx.closePath(); ctx.fill();
+    // horn
+    ctx.beginPath(); ctx.moveTo(30,10); ctx.lineTo(38,6); ctx.lineTo(34,10); ctx.fill();
+  }
+  ctx.restore();
+}
+
+function gameOver(){
+  game.running = false;
+  overlayText.textContent = `Game Over! Score: ${game.score}`;
+  overlayBox.style.display = 'block';
+  // pick a different animal next time
+  const old = animalId;
+  let tries = 0;
+  do { animalId = Math.floor(Math.random()*animals.length); tries++; } while(animalId === old && tries < 10);
+  setBackgroundForAnimal(animalId);
+}
+
+requestAnimationFrame(loop);
+dbg('requested animation frame');
+</script>
+</body>
+</html>
