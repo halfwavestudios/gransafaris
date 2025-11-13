@@ -11,14 +11,9 @@
 </head>
 <body>
 <canvas id="c"></canvas>
-<div id="debug" style="position:fixed;left:8px;top:8px;padding:8px;background:rgba(255,255,255,0.9);color:#000;border:1px solid #ddd;font-family:monospace;z-index:9999;max-width:40%;font-size:13px;line-height:1.2"></div>
-<!-- Highscore box (top-right) -->
-<div id="highscoreBox" style="position:fixed;right:8px;top:8px;padding:8px 12px;background:rgba(255,255,255,0.95);color:#000;border:1px solid #ddd;font-family:monospace;z-index:9999;font-size:13px;border-radius:6px;min-width:160px;text-align:left">
-  <div style="font-weight:700;margin-bottom:4px">High Score</div>
-  <div><span id="hsName">—</span> <span id="hsScore">0</span></div>
-</div>
-<!-- Fun fact box (bottom-right) -->
-<div id="funFact" style="position:fixed;right:8px;bottom:8px;padding:10px 12px;background:rgba(255,255,255,0.9);color:#000;border:1px solid #ddd;font-family:Arial,monospace;z-index:9999;font-size:13px;border-radius:6px;max-width:320px;opacity:0.95">Fun fact will appear here.</div>
+<!-- debug UI removed -->
+<!-- Fun fact box (bottom-right) - hidden until game starts -->
+<div id="funFact" style="display:none;position:fixed;right:8px;bottom:8px;padding:10px 12px;background:rgba(255,255,255,0.9);color:#000;border:1px solid #ddd;font-family:Arial,monospace;z-index:9999;font-size:13px;border-radius:6px;max-width:320px;opacity:0.95">Fun fact will appear here.</div>
 <div id="bg" style="position:fixed;inset:0;background:#fafafa;background-size:cover;background-position:center;/* no blur - images already blurred */transform:scale(1.03);z-index:0;transition:opacity 500ms ease-in-out;opacity:1"></div>
 <div id="overlay" style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;z-index:10000">
   <div id="overlayBox" style="background:rgba(0,0,0,0.6);color:#fff;padding:20px 28px;border-radius:8px;font-family:Arial,monospace;font-size:18px;pointer-events:auto;display:none;max-width:420px">
@@ -32,17 +27,11 @@
   </div>
 </div>
 <script>
-// Lightweight debug helper (will be removed later)
-const debugEl = document.getElementById('debug');
-function dbg(msg){
-  try{ console.log(msg); }catch(e){}
-  if(debugEl){
-    debugEl.textContent = String(msg);
-  }
-}
+// Debugging disabled in production UI
+function dbg(msg) { /* no-op debug */ }
 dbg('script start');
-window.addEventListener('error', e => dbg('ERROR: '+(e && e.message)));
-window.addEventListener('unhandledrejection', e => dbg('PromiseRejection: '+(e && e.reason)));
+window.addEventListener('error', e => {});
+window.addEventListener('unhandledrejection', e => {});
 // Canvas
 const canvas = document.getElementById('c');
 if(!canvas){ dbg('Canvas element not found'); }
@@ -171,6 +160,8 @@ function setBackgroundForAnimal(id){
       bgEl.style.backgroundImage = `url(${file})`;
       bgEl.style.opacity = 1;
       dbg('using local park image: '+file);
+      // update fun fact for this numbered park
+      setFunFactForFilename(file);
     };
     img.onerror = () => {
       dbg('local park image '+file+' not found; keeping previous background');
@@ -279,6 +270,12 @@ function start(){
   // spawn soon after starting so player has something to jump
   game.spawnCooldown = 30;
   overlayBox.style.display = 'none';
+  // show fun fact when the game starts (for the selected single park)
+  const ff = document.getElementById('funFact');
+  if(ff){
+    setFunFactForIndex(SINGLE_PARK_INDEX);
+    ff.style.display = 'block';
+  }
 }
 
 // Jump
@@ -442,7 +439,11 @@ function render(){
   // Score
   ctx.fillStyle = '#000';
   ctx.font = '20px Arial';
-  ctx.fillText(`HI 00000  ${('00000'+game.score).slice(-5)}`, cw-220, 30);
+  // show stored highscore (left) and current score (right) in the same format
+  const hs = (typeof loadHighscore === 'function') ? loadHighscore() : {score:0};
+  const hsScore = ('00000'+(hs && hs.score ? hs.score : 0)).slice(-5);
+  const curScore = ('00000'+game.score).slice(-5);
+  ctx.fillText(`HI ${hsScore}  ${curScore}`, cw-220, 30);
 }
 
 // Draw rough silhouettes for each animal. These are stylized shapes (not photo-real),
